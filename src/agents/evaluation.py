@@ -17,12 +17,9 @@ cause.
 
 from __future__ import annotations
 
-import json
-import os
 from typing import Any
 
-from openai import OpenAI
-
+from src.llm import llm_call_json
 from src.state import (
     CAUSES,
     CONTRADICTS,
@@ -56,20 +53,6 @@ Return ONLY a JSON array — no markdown fences:
 """
 
 
-def _llm_call(system: str, user: str) -> str:
-    client = OpenAI()
-    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        temperature=0.2,
-    )
-    return response.choices[0].message.content
-
-
 def evaluate_evidence(state: InvestigationState) -> dict[str, Any]:
     """Evaluate evidence against hypotheses; detect causal dependencies.
 
@@ -85,9 +68,8 @@ def evaluate_evidence(state: InvestigationState) -> dict[str, Any]:
 
     active = [h for h in hypotheses if h.get("status") == "active"]
     if not active:
-        return {"converged": True}
+        return {"converged": True, "nodes": [], "edges": []}
 
-    # Build per-hypothesis evidence summary for the prompt
     evidence_text_parts: list[str] = []
     for h in active:
         items = evidence.get(h["id"], [])
@@ -101,14 +83,7 @@ def evaluate_evidence(state: InvestigationState) -> dict[str, Any]:
         + "\n\n".join(evidence_text_parts)
     )
 
-    raw = _llm_call(_SYSTEM_PROMPT, user_msg)
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.split("\n", 1)[1]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[: cleaned.rfind("```")]
-
-    evaluations: list[dict] = json.loads(cleaned)
+    evaluations: list[dict] = llm_call_json(_SYSTEM_PROMPT, user_msg)
 
     new_nodes: list[dict] = []
     new_edges: list[dict] = []
@@ -126,7 +101,6 @@ def evaluate_evidence(state: InvestigationState) -> dict[str, Any]:
 
         if h_id in h_lookup:
             if confirmed:
-                # High-confidence confirmed hypothesis with no further cause
                 if confidence >= 0.8 and not cause_of:
                     h_lookup[h_id]["status"] = "root_cause"
                     converged = True
@@ -156,7 +130,7 @@ def evaluate_evidence(state: InvestigationState) -> dict[str, Any]:
                     new_edges.append(
                         {
                             "from_id": h_id,
-                            "to_id": h_id,
+                            "to_id": f"confirmed_{h_id}",
                             "type": SUPPORTS,
                             "iteration": iteration,
                         }

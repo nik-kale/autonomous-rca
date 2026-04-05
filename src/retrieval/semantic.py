@@ -13,9 +13,12 @@ pgvector, etc.).
 
 from __future__ import annotations
 
+import logging
 import os
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 def _embed_openai(texts: list[str]) -> np.ndarray:
@@ -31,19 +34,26 @@ def _embed_openai(texts: list[str]) -> np.ndarray:
 
 
 def _embed_local(texts: list[str]) -> np.ndarray:
-    """Embed texts using a local sentence-transformers model."""
+    """Embed texts using a local sentence-transformers model.
+
+    Falls back to TF-IDF vectors if the model cannot be loaded (e.g. no
+    network, missing model cache, or sentence-transformers not installed).
+    """
     try:
         from sentence_transformers import SentenceTransformer
-    except ImportError:
-        # Ultimate fallback: use TF-IDF vectors as a poor-man's embedding
+
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+        return model.encode(texts, convert_to_numpy=True)
+    except Exception:
+        logger.warning(
+            "sentence-transformers unavailable; falling back to TF-IDF embeddings",
+            exc_info=True,
+        )
         from sklearn.feature_extraction.text import TfidfVectorizer
 
         vectorizer = TfidfVectorizer(stop_words="english")
         matrix = vectorizer.fit_transform(texts)
         return matrix.toarray()
-
-    model = SentenceTransformer("all-MiniLM-L6-v2")
-    return model.encode(texts, convert_to_numpy=True)
 
 
 def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -75,6 +85,10 @@ def semantic_search(
         try:
             embeddings = _embed_openai(all_texts)
         except Exception:
+            logger.warning(
+                "OpenAI embedding call failed; falling back to local model",
+                exc_info=True,
+            )
             embeddings = _embed_local(all_texts)
     else:
         embeddings = _embed_local(all_texts)

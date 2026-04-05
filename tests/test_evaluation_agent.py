@@ -39,7 +39,7 @@ def _mock_openai_response(content: str) -> MagicMock:
     return mock_resp
 
 
-@patch("src.agents.evaluation.OpenAI")
+@patch("src.llm.OpenAI")
 def test_rejects_unsupported_hypothesis(mock_openai_cls):
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(_MOCK_EVALUATION)
@@ -71,7 +71,7 @@ def test_rejects_unsupported_hypothesis(mock_openai_cls):
     assert rejected[0]["id"] == "h1"
 
 
-@patch("src.agents.evaluation.OpenAI")
+@patch("src.llm.OpenAI")
 def test_identifies_root_cause(mock_openai_cls):
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(_MOCK_EVALUATION)
@@ -105,7 +105,7 @@ def test_identifies_root_cause(mock_openai_cls):
     assert len(rc_nodes) == 1
 
 
-@patch("src.agents.evaluation.OpenAI")
+@patch("src.llm.OpenAI")
 def test_emits_dependency_edges(mock_openai_cls):
     evaluation_with_deps = json.dumps([
         {
@@ -154,7 +154,7 @@ def test_emits_dependency_edges(mock_openai_cls):
     assert dep_edges[0]["to_id"] == "h2"
 
 
-@patch("src.agents.evaluation.OpenAI")
+@patch("src.llm.OpenAI")
 def test_emits_rejection_nodes(mock_openai_cls):
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(_MOCK_EVALUATION)
@@ -186,3 +186,68 @@ def test_emits_rejection_nodes(mock_openai_cls):
 
     contra_edges = [e for e in result["edges"] if e["type"] == CONTRADICTS]
     assert len(contra_edges) == 1
+
+
+@patch("src.llm.OpenAI")
+def test_no_self_loop_edges(mock_openai_cls):
+    """Edges must never have from_id == to_id (would violate DAG property)."""
+    evaluation = json.dumps([
+        {
+            "hypothesis_id": "h1",
+            "confirmed": True,
+            "cause_of": "h2",
+            "confidence": 0.6,
+            "reasoning": "Partial evidence supports this",
+        },
+    ])
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(evaluation)
+    mock_openai_cls.return_value = mock_client
+
+    state = {
+        "problem_statement": "Service down",
+        "hypotheses": [
+            {"id": "h1", "text": "Disk pressure", "status": "active", "domain": "infrastructure", "iteration": 0},
+            {"id": "h2", "text": "Pod eviction", "status": "active", "domain": "infrastructure", "iteration": 0},
+        ],
+        "evidence": {"h1": [{"text": "Disk at 94%"}]},
+        "evaluations": [],
+        "nodes": [],
+        "edges": [],
+        "iteration": 1,
+        "max_iterations": 5,
+        "converged": False,
+        "root_cause": None,
+    }
+
+    result = evaluate_evidence(state)
+
+    for edge in result["edges"]:
+        assert edge["from_id"] != edge["to_id"], (
+            f"Self-loop detected: {edge['from_id']} → {edge['to_id']}"
+        )
+
+
+def test_early_return_when_no_active_hypotheses():
+    """When all hypotheses are resolved, the agent should converge immediately."""
+    state = {
+        "problem_statement": "Service down",
+        "hypotheses": [
+            {"id": "h1", "text": "Network issue", "status": "rejected", "domain": "network", "iteration": 0},
+            {"id": "h2", "text": "Pod eviction", "status": "root_cause", "domain": "infrastructure", "iteration": 0},
+        ],
+        "evidence": {},
+        "evaluations": [],
+        "nodes": [],
+        "edges": [],
+        "iteration": 1,
+        "max_iterations": 5,
+        "converged": False,
+        "root_cause": None,
+    }
+
+    result = evaluate_evidence(state)
+
+    assert result["converged"] is True
+    assert result["nodes"] == []
+    assert result["edges"] == []

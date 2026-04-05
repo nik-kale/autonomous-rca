@@ -27,6 +27,7 @@ from src.state import (
 
 
 # --- Mock LLM responses for a deterministic 2-iteration investigation ---
+# Hypothesis IDs are prefixed by generate_hypotheses: iteration 0 → i0_*, iteration 1 → i1_*
 
 _ITER1_HYPOTHESES = json.dumps([
     {"id": "h1", "text": "Network connectivity failure", "domain": "network"},
@@ -35,11 +36,11 @@ _ITER1_HYPOTHESES = json.dumps([
 ])
 
 _ITER1_EVALUATION = json.dumps([
-    {"hypothesis_id": "h1", "confirmed": False, "cause_of": None, "confidence": 0.1,
+    {"hypothesis_id": "i0_h1", "confirmed": False, "cause_of": None, "confidence": 0.1,
      "reasoning": "Network logs show everything healthy"},
-    {"hypothesis_id": "h2", "confirmed": True, "cause_of": "h3", "confidence": 0.7,
+    {"hypothesis_id": "i0_h2", "confirmed": True, "cause_of": "i0_h3", "confidence": 0.7,
      "reasoning": "Pod eviction explains checkout failure but needs deeper investigation"},
-    {"hypothesis_id": "h3", "confirmed": False, "cause_of": None, "confidence": 0.15,
+    {"hypothesis_id": "i0_h3", "confirmed": False, "cause_of": None, "confidence": 0.15,
      "reasoning": "No crash loops found in container logs"},
 ])
 
@@ -49,9 +50,9 @@ _ITER2_HYPOTHESES = json.dumps([
 ])
 
 _ITER2_EVALUATION = json.dumps([
-    {"hypothesis_id": "h4", "confirmed": True, "cause_of": None, "confidence": 0.92,
+    {"hypothesis_id": "i1_h4", "confirmed": True, "cause_of": None, "confidence": 0.92,
      "reasoning": "DiskPressure=True on worker-3 directly caused pod eviction"},
-    {"hypothesis_id": "h5", "confirmed": False, "cause_of": None, "confidence": 0.1,
+    {"hypothesis_id": "i1_h5", "confirmed": False, "cause_of": None, "confidence": 0.1,
      "reasoning": "Memory usage was within normal range"},
 ])
 
@@ -121,26 +122,23 @@ class TestShouldContinue:
 
 
 class TestFullPipeline:
-    @patch("src.agents.analysis.OpenAI")
-    @patch("src.agents.evaluation.OpenAI")
-    @patch("src.agents.diagnostic.OpenAI")
-    def test_produces_valid_investigation_graph(
-        self, mock_diag_cls, mock_eval_cls, mock_analysis_cls
-    ):
-        mock_diag_cls.return_value = _build_mock_client(
-            [_ITER1_HYPOTHESES, _ITER2_HYPOTHESES]
-        )
-        mock_eval_cls.return_value = _build_mock_client(
-            [_ITER1_EVALUATION, _ITER2_EVALUATION]
-        )
-        mock_analysis_cls.return_value = _build_mock_client([_SYNTHESIS])
+    @patch("src.llm.OpenAI")
+    def test_produces_valid_investigation_graph(self, mock_openai_cls):
+        mock_openai_cls.return_value = _build_mock_client([
+            _ITER1_HYPOTHESES,
+            _ITER1_EVALUATION,
+            _ITER2_HYPOTHESES,
+            _ITER2_EVALUATION,
+            _SYNTHESIS,
+        ])
 
         from src.evidence.mock_data import KUBERNETES_DISK_PRESSURE
 
         app = build_investigation_graph()
         result = app.invoke({
             "problem_statement": KUBERNETES_DISK_PRESSURE["problem_statement"],
-            "evidence": KUBERNETES_DISK_PRESSURE["evidence_sources"],
+            "evidence_sources": KUBERNETES_DISK_PRESSURE["evidence_sources"],
+            "evidence": {},
             "hypotheses": [],
             "evaluations": [],
             "nodes": [],
@@ -151,43 +149,36 @@ class TestFullPipeline:
             "root_cause": None,
         })
 
-        # The graph should have accumulated nodes and edges
         assert len(result["nodes"]) > 0
         assert len(result["edges"]) > 0
 
-        # Verify node types
         node_types = {n["type"] for n in result["nodes"]}
         assert PROBLEM in node_types
         assert HYPOTHESIS in node_types
 
-        # Verify edge types
         edge_types = {e["type"] for e in result["edges"]}
         assert GENERATED_FROM in edge_types
 
-        # Should have converged
         assert result["converged"] is True
         assert result["root_cause"] is not None
 
-    @patch("src.agents.analysis.OpenAI")
-    @patch("src.agents.evaluation.OpenAI")
-    @patch("src.agents.diagnostic.OpenAI")
-    def test_graph_has_valid_node_references(
-        self, mock_diag_cls, mock_eval_cls, mock_analysis_cls
-    ):
-        mock_diag_cls.return_value = _build_mock_client(
-            [_ITER1_HYPOTHESES, _ITER2_HYPOTHESES]
-        )
-        mock_eval_cls.return_value = _build_mock_client(
-            [_ITER1_EVALUATION, _ITER2_EVALUATION]
-        )
-        mock_analysis_cls.return_value = _build_mock_client([_SYNTHESIS])
+    @patch("src.llm.OpenAI")
+    def test_graph_has_valid_node_references(self, mock_openai_cls):
+        mock_openai_cls.return_value = _build_mock_client([
+            _ITER1_HYPOTHESES,
+            _ITER1_EVALUATION,
+            _ITER2_HYPOTHESES,
+            _ITER2_EVALUATION,
+            _SYNTHESIS,
+        ])
 
         from src.evidence.mock_data import KUBERNETES_DISK_PRESSURE
 
         app = build_investigation_graph()
         result = app.invoke({
             "problem_statement": KUBERNETES_DISK_PRESSURE["problem_statement"],
-            "evidence": KUBERNETES_DISK_PRESSURE["evidence_sources"],
+            "evidence_sources": KUBERNETES_DISK_PRESSURE["evidence_sources"],
+            "evidence": {},
             "hypotheses": [],
             "evaluations": [],
             "nodes": [],
@@ -200,14 +191,73 @@ class TestFullPipeline:
 
         node_ids = {n["id"] for n in result["nodes"]}
 
-        # Every edge should reference nodes that exist in the graph
-        # (evidence nodes are auto-generated so all from_ids should exist)
         for edge in result["edges"]:
             from_id = edge["from_id"]
             to_id = edge["to_id"]
-            # We allow edges to reference hypothesis IDs that may not have
-            # their own explicit node (they're embedded in hypothesis nodes)
-            # but all from_ids should be valid
             assert from_id in node_ids or from_id in {h["id"] for h in result["hypotheses"]}, (
                 f"Edge from_id '{from_id}' not found in nodes or hypotheses"
             )
+
+    @patch("src.llm.OpenAI")
+    def test_no_self_loop_edges_in_pipeline(self, mock_openai_cls):
+        """End-to-end check that no edge has from_id == to_id."""
+        mock_openai_cls.return_value = _build_mock_client([
+            _ITER1_HYPOTHESES,
+            _ITER1_EVALUATION,
+            _ITER2_HYPOTHESES,
+            _ITER2_EVALUATION,
+            _SYNTHESIS,
+        ])
+
+        from src.evidence.mock_data import KUBERNETES_DISK_PRESSURE
+
+        app = build_investigation_graph()
+        result = app.invoke({
+            "problem_statement": KUBERNETES_DISK_PRESSURE["problem_statement"],
+            "evidence_sources": KUBERNETES_DISK_PRESSURE["evidence_sources"],
+            "evidence": {},
+            "hypotheses": [],
+            "evaluations": [],
+            "nodes": [],
+            "edges": [],
+            "iteration": 0,
+            "max_iterations": 5,
+            "converged": False,
+            "root_cause": None,
+        })
+
+        for edge in result["edges"]:
+            assert edge["from_id"] != edge["to_id"], (
+                f"Self-loop: {edge['from_id']} → {edge['to_id']} (type={edge['type']})"
+            )
+
+    @patch("src.llm.OpenAI")
+    def test_evidence_corpus_preserved_across_iterations(self, mock_openai_cls):
+        """The original evidence_sources must remain intact through all iterations."""
+        mock_openai_cls.return_value = _build_mock_client([
+            _ITER1_HYPOTHESES,
+            _ITER1_EVALUATION,
+            _ITER2_HYPOTHESES,
+            _ITER2_EVALUATION,
+            _SYNTHESIS,
+        ])
+
+        from src.evidence.mock_data import KUBERNETES_DISK_PRESSURE
+
+        original_sources = KUBERNETES_DISK_PRESSURE["evidence_sources"]
+        app = build_investigation_graph()
+        result = app.invoke({
+            "problem_statement": KUBERNETES_DISK_PRESSURE["problem_statement"],
+            "evidence_sources": original_sources,
+            "evidence": {},
+            "hypotheses": [],
+            "evaluations": [],
+            "nodes": [],
+            "edges": [],
+            "iteration": 0,
+            "max_iterations": 5,
+            "converged": False,
+            "root_cause": None,
+        })
+
+        assert result["evidence_sources"] == original_sources

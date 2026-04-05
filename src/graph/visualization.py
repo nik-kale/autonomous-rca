@@ -83,7 +83,10 @@ def plot_investigation_graph(
     Nodes are colored by type; edges are styled by relationship type.
     Iteration numbers are shown as subscript labels.
     """
-    matplotlib.use("Agg")
+    current_backend = matplotlib.get_backend()
+    is_interactive = current_backend not in ("agg", "Agg", "")
+    if not is_interactive and save_path:
+        matplotlib.use("Agg")
     G = _build_nx_graph(nodes, edges)
 
     if not G.nodes:

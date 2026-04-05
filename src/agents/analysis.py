@@ -14,11 +14,9 @@ best-effort conclusion.
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
-from openai import OpenAI
-
+from src.llm import llm_call_json
 from src.state import ROOT_CAUSE, CAUSES, InvestigationState
 
 _SYSTEM_PROMPT = """\
@@ -43,20 +41,6 @@ Return ONLY the JSON object — no markdown fences.
 """
 
 
-def _llm_call(system: str, user: str) -> str:
-    client = OpenAI()
-    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        temperature=0.2,
-    )
-    return response.choices[0].message.content
-
-
 def synthesize_investigation(state: InvestigationState) -> dict[str, Any]:
     """Synthesize the investigation into a final root-cause report.
 
@@ -76,14 +60,7 @@ def synthesize_investigation(state: InvestigationState) -> dict[str, Any]:
     ]
     user_msg = "\n".join(user_parts)
 
-    raw = _llm_call(_SYSTEM_PROMPT, user_msg)
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.split("\n", 1)[1]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[: cleaned.rfind("```")]
-
-    synthesis: dict = json.loads(cleaned)
+    synthesis: dict = llm_call_json(_SYSTEM_PROMPT, user_msg)
 
     root_cause = synthesis.get("root_cause", state.get("root_cause", "Undetermined"))
     iteration = state.get("iteration", 0)
@@ -98,7 +75,6 @@ def synthesize_investigation(state: InvestigationState) -> dict[str, Any]:
         }
     ]
 
-    # Link the synthesis to any confirmed root-cause hypothesis
     new_edges = []
     for h in state.get("hypotheses", []):
         if h.get("status") == "root_cause":

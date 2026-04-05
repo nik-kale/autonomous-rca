@@ -48,6 +48,10 @@ class InvestigationState(TypedDict):
 
     problem_statement: str
 
+    # Immutable original evidence corpus — never overwritten by agents.
+    # Keyed by domain: {"app-logs": [...], "k8s-events": [...], ...}
+    evidence_sources: dict
+
     # Hypotheses generated (and refined) by the Diagnostic Agent
     hypotheses: list[dict]  # [{id, text, status, domain, iteration}]
 

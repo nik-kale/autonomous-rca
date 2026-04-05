@@ -49,19 +49,9 @@ def retrieve_evidence(state: InvestigationState) -> dict[str, Any]:
     """
     hypotheses = state.get("hypotheses", [])
     existing_evidence: dict = dict(state.get("evidence", {}))
-    evidence_sources: dict = state.get("evidence", {})
+    evidence_sources: dict = state.get("evidence_sources", {})
 
-    # On the first pass, evidence_sources is the raw scenario data;
-    # on later passes it may have been restructured by prior iterations.
-    # We need the original corpus — look for list-of-dict values.
     corpus = _flatten_evidence_sources(evidence_sources)
-
-    # If the corpus is empty (evidence field already restructured by prior
-    # iteration), try to rebuild from any remaining list-valued entries.
-    if not corpus:
-        for v in evidence_sources.values():
-            if isinstance(v, list) and v and isinstance(v[0], dict) and "text" in v[0]:
-                corpus.extend(v)
 
     new_nodes: list[dict] = []
     new_edges: list[dict] = []
@@ -73,7 +63,6 @@ def retrieve_evidence(state: InvestigationState) -> dict[str, Any]:
 
         h_id = h["id"]
 
-        # Already retrieved for this hypothesis in a prior iteration?
         if h_id in existing_evidence and isinstance(existing_evidence[h_id], list):
             updated_evidence[h_id] = existing_evidence[h_id]
             continue

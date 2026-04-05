@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Literal
 
 from langgraph.graph import END, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 
 from src.agents.analysis import synthesize_investigation
 from src.agents.diagnostic import generate_hypotheses
@@ -46,7 +47,7 @@ def should_continue(state: InvestigationState) -> Literal["diagnose", "analyze"]
     return "diagnose"
 
 
-def build_investigation_graph() -> StateGraph:
+def build_investigation_graph() -> CompiledStateGraph:
     """Construct and compile the LangGraph investigation pipeline.
 
     Returns a compiled ``CompiledStateGraph`` ready for ``.invoke()`` or

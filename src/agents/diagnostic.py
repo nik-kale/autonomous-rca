@@ -14,12 +14,10 @@ new hypothesis and a ``generated_from`` edge linking it to the problem node
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from typing import Any
 
-from openai import OpenAI
-
+from src.llm import llm_call_json
 from src.state import (
     GENERATED_FROM,
     HYPOTHESIS,
@@ -53,21 +51,6 @@ refining or deepening the remaining lines of inquiry.
 """
 
 
-def _llm_call(system: str, user: str) -> str:
-    """Make a single chat completion call and return the text response."""
-    client = OpenAI()
-    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        temperature=0.3,
-    )
-    return response.choices[0].message.content
-
-
 def generate_hypotheses(state: InvestigationState) -> dict[str, Any]:
     """Generate or refine root-cause hypotheses.
 
@@ -97,22 +80,19 @@ def generate_hypotheses(state: InvestigationState) -> dict[str, Any]:
         }
         user_msg += f"\n\nAvailable evidence (sample):\n{json.dumps(evidence_summary, indent=2)}"
 
-    raw = _llm_call(system, user_msg)
+    new_hypotheses_raw: list[dict] = llm_call_json(system, user_msg, temperature=0.3)
 
-    # Robust JSON extraction — handle markdown fences if the model wraps them
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.split("\n", 1)[1]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[: cleaned.rfind("```")]
-    new_hypotheses_raw: list[dict] = json.loads(cleaned)
-
-    # Merge with existing, tagging each with iteration + status
+    existing_ids = {h["id"] for h in existing_hypotheses}
     new_nodes: list[dict] = []
     new_edges: list[dict] = []
 
     for h in new_hypotheses_raw:
-        h_id = h.get("id", f"h{uuid.uuid4().hex[:6]}")
+        raw_id = h.get("id", f"h{uuid.uuid4().hex[:6]}")
+        h_id = f"i{iteration}_{raw_id}"
+        while h_id in existing_ids:
+            h_id = f"i{iteration}_{raw_id}_{uuid.uuid4().hex[:4]}"
+        existing_ids.add(h_id)
+
         h["id"] = h_id
         h["status"] = "active"
         h["iteration"] = iteration
@@ -135,7 +115,6 @@ def generate_hypotheses(state: InvestigationState) -> dict[str, Any]:
             }
         )
 
-    # On iteration 0 add the problem node itself
     if iteration == 0:
         new_nodes.insert(
             0,
