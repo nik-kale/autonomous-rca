@@ -1,0 +1,130 @@
+{
+  "problem_statement": "The checkout service (port 8080) is unreachable. Customers cannot complete orders.",
+  "evidence_sources": {
+    "app-logs": [
+      {
+        "timestamp": "2026-04-30T10:02:01Z",
+        "source": "checkout-service.log",
+        "text": "HTTP 503 \u2014 upstream connect error, service 'checkout' unreachable"
+      },
+      {
+        "timestamp": "2026-04-30T10:02:03Z",
+        "source": "checkout-service.log",
+        "text": "timeout waiting for connection to checkout-pod-7b on port 8080"
+      },
+      {
+        "timestamp": "2026-04-30T10:02:10Z",
+        "source": "checkout-service.log",
+        "text": "retry 3/3 failed for checkout-pod-7b:8080 \u2014 giving up"
+      },
+      {
+        "timestamp": "2026-04-30T10:01:55Z",
+        "source": "gateway.log",
+        "text": "upstream health check failed for checkout backend pool"
+      },
+      {
+        "timestamp": "2026-04-30T09:50:00Z",
+        "source": "checkout-service.log",
+        "text": "INFO request processed in 42ms \u2014 order #88123 confirmed"
+      }
+    ],
+    "k8s-events": [
+      {
+        "timestamp": "2026-04-30T10:01:45Z",
+        "source": "cluster-state/events.json",
+        "text": "Pod checkout-pod-7b evicted from node worker-3"
+      },
+      {
+        "timestamp": "2026-04-30T10:01:44Z",
+        "source": "cluster-state/events.json",
+        "text": "Eviction manager: pod checkout-pod-7b exceeds ephemeral-storage resource limits"
+      },
+      {
+        "timestamp": "2026-04-30T10:01:43Z",
+        "source": "cluster-state/deployments.json",
+        "text": "Deployment 'checkout-app' Available replicas: 0"
+      },
+      {
+        "timestamp": "2026-04-30T10:01:42Z",
+        "source": "cluster-state/events.json",
+        "text": "Node worker-3 tainted with node.kubernetes.io/disk-pressure:NoSchedule"
+      },
+      {
+        "timestamp": "2026-04-30T09:45:00Z",
+        "source": "cluster-state/events.json",
+        "text": "Pod payment-pod-3a running on node worker-2 \u2014 healthy"
+      },
+      {
+        "timestamp": "2026-04-30T09:30:00Z",
+        "source": "cluster-state/events.json",
+        "text": "Scheduled pod checkout-pod-7b on node worker-3"
+      }
+    ],
+    "node-metrics": [
+      {
+        "timestamp": "2026-04-30T10:00:12Z",
+        "source": "worker-3/kubelet.log",
+        "text": "kubelet: node worker-3 condition DiskPressure=True"
+      },
+      {
+        "timestamp": "2026-04-30T09:58:30Z",
+        "source": "worker-3/kubelet.log",
+        "text": "disk usage on /var/lib/kubelet reached 94%, eviction threshold is 90%"
+      },
+      {
+        "timestamp": "2026-04-30T09:55:00Z",
+        "source": "worker-3/syslog",
+        "text": "Container runtime storage: used 32Gi of 34Gi, available 2Gi"
+      },
+      {
+        "timestamp": "2026-04-30T09:50:00Z",
+        "source": "worker-3/kubelet.log",
+        "text": "Image garbage collection freed 0 bytes \u2014 no unused images"
+      },
+      {
+        "timestamp": "2026-04-30T09:45:00Z",
+        "source": "worker-1/kubelet.log",
+        "text": "kubelet: node worker-1 condition DiskPressure=False"
+      },
+      {
+        "timestamp": "2026-04-30T09:45:00Z",
+        "source": "worker-2/kubelet.log",
+        "text": "kubelet: node worker-2 condition DiskPressure=False"
+      },
+      {
+        "timestamp": "2026-04-30T09:40:00Z",
+        "source": "worker-3/kubelet.log",
+        "text": "disk usage on /var/lib/kubelet reached 88%, approaching eviction threshold"
+      }
+    ],
+    "network-logs": [
+      {
+        "timestamp": "2026-04-30T10:02:05Z",
+        "source": "router-gw1/syslog",
+        "text": "GigabitEthernet0/0/0: Interface is up, line protocol is up"
+      },
+      {
+        "timestamp": "2026-04-30T10:01:00Z",
+        "source": "router-gw1/syslog",
+        "text": "OSPF adjacency on Gi0/0/0 Full, no changes detected"
+      },
+      {
+        "timestamp": "2026-04-30T10:00:00Z",
+        "source": "switch-tor1/syslog",
+        "text": "No BGP neighbor state changes in last 24 hours"
+      },
+      {
+        "timestamp": "2026-04-30T09:59:00Z",
+        "source": "switch-tor1/syslog",
+        "text": "All trunk ports operational \u2014 VLAN 100,200,300 active"
+      },
+      {
+        "timestamp": "2026-04-30T09:58:00Z",
+        "source": "firewall-fw1/syslog",
+        "text": "No denied flows to 10.0.0.0/8 in last 60 minutes"
+      }
+    ]
+  },
+  "expected_root_cause": "DiskPressure on node worker-3 caused by ephemeral storage exhaustion (94% usage, 90% threshold). Kubelet evicted checkout-pod-7b, leaving the checkout-app deployment with 0 available replicas and making the service unreachable.",
+  "expected_iterations": 3
+}

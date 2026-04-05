@@ -1,0 +1,100 @@
+{
+  "problem_statement": "The order-management service is experiencing response times above 30 seconds. Multiple customers report timeouts when viewing order history.",
+  "evidence_sources": {
+    "app-logs": [
+      {
+        "timestamp": "2026-05-01T14:30:05Z",
+        "source": "order-service.log",
+        "text": "WARN connection pool exhausted \u2014 waited 28s for available connection"
+      },
+      {
+        "timestamp": "2026-05-01T14:30:12Z",
+        "source": "order-service.log",
+        "text": "ERROR request /api/orders/history timed out after 30s"
+      },
+      {
+        "timestamp": "2026-05-01T14:29:58Z",
+        "source": "order-service.log",
+        "text": "WARN HikariPool-1 \u2014 pool stats: active=100, idle=0, waiting=37, total=100"
+      },
+      {
+        "timestamp": "2026-05-01T14:25:00Z",
+        "source": "order-service.log",
+        "text": "INFO request /api/orders/history completed in 120ms"
+      },
+      {
+        "timestamp": "2026-05-01T14:31:00Z",
+        "source": "order-service.log",
+        "text": "ERROR SqlTransientConnectionException: could not acquire connection from pool within 30000ms"
+      }
+    ],
+    "db-metrics": [
+      {
+        "timestamp": "2026-05-01T14:30:00Z",
+        "source": "postgres-primary/pg_stat_activity",
+        "text": "Active connections: 100/100 max_connections. 40 connections held by user 'analytics_svc'"
+      },
+      {
+        "timestamp": "2026-05-01T14:29:45Z",
+        "source": "postgres-primary/pg_stat_activity",
+        "text": "Long-running query (pid 8842): SELECT * FROM orders JOIN line_items ON orders.id = line_items.order_id JOIN products ON line_items.product_id = products.id WHERE orders.created_at > '2025-01-01' \u2014 running for 47 minutes, state: active"
+      },
+      {
+        "timestamp": "2026-05-01T14:29:50Z",
+        "source": "postgres-primary/pg_stat_activity",
+        "text": "analytics_svc connections breakdown: 40 active, 0 idle. No statement_timeout configured for role."
+      },
+      {
+        "timestamp": "2026-05-01T14:00:00Z",
+        "source": "postgres-primary/pg_stat_activity",
+        "text": "Active connections: 58/100 max_connections \u2014 healthy"
+      },
+      {
+        "timestamp": "2026-05-01T14:28:00Z",
+        "source": "postgres-primary/pg_stat_statements",
+        "text": "Top query by total_time: SELECT * FROM orders JOIN line_items ... \u2014 0 index scans, sequential scan on orders (12M rows)"
+      },
+      {
+        "timestamp": "2026-05-01T14:30:10Z",
+        "source": "postgres-replica/pg_stat_replication",
+        "text": "Replication lag: 0.2s \u2014 replica healthy"
+      }
+    ],
+    "infra-metrics": [
+      {
+        "timestamp": "2026-05-01T14:30:00Z",
+        "source": "postgres-primary/node_exporter",
+        "text": "CPU usage: 78%, Memory: 62%, Disk I/O wait: 45%"
+      },
+      {
+        "timestamp": "2026-05-01T14:29:00Z",
+        "source": "postgres-primary/node_exporter",
+        "text": "Disk read throughput: 450 MB/s (baseline: 50 MB/s) \u2014 sequential scan detected"
+      },
+      {
+        "timestamp": "2026-05-01T14:30:00Z",
+        "source": "order-service-pod/metrics",
+        "text": "Pod CPU: 12%, Memory: 340Mi/512Mi \u2014 within limits"
+      },
+      {
+        "timestamp": "2026-05-01T14:30:00Z",
+        "source": "load-balancer/metrics",
+        "text": "Backend response time p99: 31200ms (baseline: 180ms)"
+      }
+    ],
+    "network-logs": [
+      {
+        "timestamp": "2026-05-01T14:30:00Z",
+        "source": "vpc-flow-logs",
+        "text": "Traffic between order-service and postgres-primary: normal volume, no drops"
+      },
+      {
+        "timestamp": "2026-05-01T14:30:00Z",
+        "source": "dns-resolver/query.log",
+        "text": "postgres-primary.internal resolved to 10.0.2.15 in 1ms \u2014 no errors"
+      }
+    ]
+  },
+  "expected_root_cause": "An unoptimized analytics query (full sequential scan on 12M rows, no index usage) running without a statement_timeout consumed 40 of 100 database connections for 47+ minutes. This exhausted the connection pool, causing the order-management service to queue requests until they timed out at 30 seconds.",
+  "expected_iterations": 3
+}
